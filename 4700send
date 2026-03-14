@@ -49,19 +49,22 @@ class Sender:
 
         while True:
             sockets = [self.socket]
+            # Listen to stdin for incoming acks from reciver
             if len(self.unacked) < self.window_size and not eof_reached:
                 sockets.append(sys.stdin)
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
+            # Seeing if any acks take longer then 1 second, consider them lost and resend
             current_time = time.time()
-            for seq, last_packet_sent in self.unacked.items():
-                if((current_time - last_packet_sent["time"]) > timeout_interval):
+            for s, packet_info in self.unacked.items():
+                if((current_time - packet_info["time"]) > timeout_interval):
                     self.log("Timeout expired; resending packet")
-                    self.send(last_packet_sent)
-                    last_packet_sent["time"] = current_time
+                    self.send(packet_info["msg"])
+                    packet_info["time"] = current_time
 
             for conn in socks:
+                # looking at incoming acks and deleting them from mem to slide window
                 if conn == self.socket:
                     data = self.recv(conn)
 

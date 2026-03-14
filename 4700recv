@@ -36,16 +36,24 @@ class Receiver:
         sys.stderr.flush()
 
     def run(self):
+        expected_seq = 0
+        buffer = {}
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
                 msg = self.recv(conn)
 
                 if msg:
-                    # Print out the data to stdout
-                    print(msg["data"], end='', flush=True)
-
-                    # Always send back an ack
+                    if "data" in msg:
+                        buffer[msg["seq"]] = msg["data"]
+                        if msg["seq"] == expected_seq:
+                            while expected_seq in buffer:
+                                print(buffer[expected_seq], end="", flush=True)
+                                del buffer[expected_seq]
+                                expected_seq += 1
+                        else:
+                            buffer[msg["seq"]] = msg["data"]
+                        
                     self.send({ "type": "ack", "seq": msg["seq"] })
 
 
