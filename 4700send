@@ -105,7 +105,7 @@ class Sender:
                     seq += 1
 
 
-            if eof_reached and self.highest_ack >= (seq - 1):
+            if eof_reached and len(self.unacked) == 0:
                 self.log("All done")
                 sys.exit(0)
 
