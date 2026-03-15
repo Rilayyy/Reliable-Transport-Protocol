@@ -18,6 +18,10 @@ class Sender:
         self.unacked = {}
         self.msg = None
 
+        self.wobble = 0.0
+        self.estimated_rtt = 1.0
+        self.highest_ack = -1
+
     def log(self, message):
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
@@ -44,8 +48,8 @@ class Sender:
 
     def run(self):
         seq = 0
-        timeout_interval = 1.0
         eof_reached = False 
+        timeout_interval = 1.0
 
         while True:
             sockets = [self.socket]
@@ -62,6 +66,8 @@ class Sender:
                     self.log("Timeout expired; resending packet")
                     self.send(packet_info["msg"])
                     packet_info["time"] = current_time
+                    packet_info["retransmitted"] = True
+                    self.window_size = max(1, self.window_size // 2)
 
             for conn in socks:
                 # looking at incoming acks and deleting them from mem to slide window
@@ -69,8 +75,21 @@ class Sender:
                     data = self.recv(conn)
 
                     if data:
-                        if data["type"] == "ack" and data["seq"] in self.unacked:
-                            del self.unacked[data["seq"]]
+                        if data["type"] == "ack":
+                            ack_seq = int(data["seq"])
+
+                            if ack_seq > self.highest_ack:
+                                self.highest_ack = ack_seq
+
+                            if ack_seq in self.unacked:
+                                packet_info = self.unacked[ack_seq]
+
+                                if packet_info["retransmitted"] == False:
+                                    timeout_interval = self.update_timeout(packet_info["time"], time.time())
+                                    timeout_interval = max(0.5, timeout_interval)
+                                    self.window_size += 1
+
+                                del self.unacked[ack_seq]
 
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
@@ -82,13 +101,28 @@ class Sender:
                     self.send(self.msg)
 
 
-                    self.unacked[seq] = {"msg": self.msg, "time": time.time()}
+                    self.unacked[seq] = {"msg": self.msg, "time": time.time(), "retransmitted": False}
                     seq += 1
 
 
-            if eof_reached and len(self.unacked) == 0:
+            if eof_reached and self.highest_ack >= (seq - 1):
                 self.log("All done")
                 sys.exit(0)
+
+    def update_timeout(self, send_time, ack_time):
+            sample_rtt = ack_time - send_time
+            
+            self.estimated_rtt = 0.875 * self.estimated_rtt + 0.125 * sample_rtt
+            
+            dev_rtt = abs(sample_rtt - self.estimated_rtt)
+            
+            self.wobble = 0.75 * self.wobble + 0.25 * dev_rtt
+            
+            timeout_interval = self.estimated_rtt + 4 * self.wobble
+            return timeout_interval
+
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='send data')

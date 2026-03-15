@@ -45,14 +45,14 @@ class Receiver:
 
                 if msg:
                     if "data" in msg:
-                        buffer[msg["seq"]] = msg["data"]
-                        if msg["seq"] == expected_seq:
-                            while expected_seq in buffer:
-                                print(buffer[expected_seq], end="", flush=True)
-                                del buffer[expected_seq]
-                                expected_seq += 1
-                        else:
-                            buffer[msg["seq"]] = msg["data"]
+                        seq_number = int(msg["seq"])
+                        buffer[seq_number] = msg["data"]
+                        
+                        while expected_seq in buffer:
+                            sys.stdout.write(buffer[expected_seq])
+                            sys.stdout.flush()
+                            del buffer[expected_seq]
+                            expected_seq += 1
                         
                     self.send({ "type": "ack", "seq": msg["seq"] })
 
