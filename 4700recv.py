@@ -1,5 +1,4 @@
-
-#!/usr/bin/env -S python3 -u
+#!/usr/bin/env python3
 
 import argparse, socket, time, json, select, struct, sys, math
 
@@ -12,6 +11,8 @@ class Receiver:
 
         self.remote_host = None
         self.remote_port = None
+        self.next_expected = 0
+        self.buffer = {}  # seq -> data
 
     def send(self, message):
         self.log("Sent message %s" % json.dumps(message))
@@ -43,13 +44,20 @@ class Receiver:
             for conn in socks:
                 msg = self.recv(conn)
 
-                if msg:
-                    # Print out the data to stdout
-                    print(msg["data"], end='', flush=True)
-
-                    # Always send back an ack
-                    self.send({ "type": "ack", "seq": msg["seq"] })
-
+                if msg and "seq" in msg and "data" in msg:
+                    seq = int(msg["seq"])
+                    if seq < self.next_expected:
+                        # Duplicate: ACK so sender can clear, do not print
+                        self.send({"type": "ack", "seq": msg["seq"]})
+                    else:
+                        # In-order or out-of-order: store and drain in order
+                        self.buffer[seq] = msg["data"]
+                        while self.next_expected in self.buffer:
+                            sys.stdout.write(self.buffer[self.next_expected])
+                            sys.stdout.flush()
+                            del self.buffer[self.next_expected]
+                            self.next_expected += 1
+                        self.send({"type": "ack", "seq": msg["seq"]})
 
         return
 
