@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, struct, sys, math, zlib
+
+
+def checksum_compute(obj):
+    """Compute CRC32 over canonical JSON (no cksum field). obj must not contain 'cksum'."""
+    canonical = json.dumps(obj, sort_keys=True)
+    return zlib.crc32(canonical.encode()) & 0xffffffff
+
+
+def checksum_verify(obj):
+    """Return True if obj has valid 'cksum' matching recomputed checksum."""
+    if "cksum" not in obj or not isinstance(obj.get("cksum"), (int, float)):
+        return False
+    received = int(obj["cksum"]) & 0xffffffff
+    copy = dict(obj)
+    del copy["cksum"]
+    expected = checksum_compute(copy)
+    return received == expected
+
 
 class Receiver:
     def __init__(self):
@@ -30,9 +48,12 @@ class Receiver:
         if addr != (self.remote_host, self.remote_port):
             self.log("Error:  Received response from unexpected remote; ignoring")
             return None
-        else:
-            self.log("Received message %s" % data.decode("utf-8"))
-            return json.loads(data.decode("utf-8"))
+        try:
+            parsed = json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None  # Corrupted packet, drop
+        self.log("Received message %s" % data.decode("utf-8", errors="replace"))
+        return parsed
 
     def log(self, message):
         sys.stderr.write(message + "\n")
@@ -43,21 +64,27 @@ class Receiver:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
                 msg = self.recv(conn)
-
-                if msg and "seq" in msg and "data" in msg:
-                    seq = int(msg["seq"])
-                    if seq < self.next_expected:
-                        # Duplicate: ACK so sender can clear, do not print
-                        self.send({"type": "ack", "seq": msg["seq"]})
-                    else:
-                        # In-order or out-of-order: store and drain in order
-                        self.buffer[seq] = msg["data"]
-                        while self.next_expected in self.buffer:
-                            sys.stdout.write(self.buffer[self.next_expected])
-                            sys.stdout.flush()
-                            del self.buffer[self.next_expected]
-                            self.next_expected += 1
-                        self.send({"type": "ack", "seq": msg["seq"]})
+                if msg is None:
+                    continue
+                if "seq" not in msg or "data" not in msg:
+                    continue
+                if not checksum_verify(msg):
+                    continue  # Corrupted data packet, drop (do not ACK)
+                seq = int(msg["seq"])
+                ack_msg = {"type": "ack", "seq": msg["seq"]}
+                ack_msg["cksum"] = checksum_compute(ack_msg)
+                if seq < self.next_expected:
+                    # Duplicate: ACK so sender can clear, do not print
+                    self.send(ack_msg)
+                else:
+                    # In-order or out-of-order: store and drain in order
+                    self.buffer[seq] = msg["data"]
+                    while self.next_expected in self.buffer:
+                        sys.stdout.write(self.buffer[self.next_expected])
+                        sys.stdout.flush()
+                        del self.buffer[self.next_expected]
+                        self.next_expected += 1
+                    self.send(ack_msg)
 
         return
 

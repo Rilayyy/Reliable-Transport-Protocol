@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, struct, sys, math, zlib
 
 DATA_SIZE = 1375
+
+
+def checksum_compute(obj):
+    """Compute CRC32 over canonical JSON (no cksum field). obj must not contain 'cksum'."""
+    canonical = json.dumps(obj, sort_keys=True)
+    return zlib.crc32(canonical.encode()) & 0xffffffff
+
+
+def checksum_verify(obj):
+    """Return True if obj has valid 'cksum' matching recomputed checksum."""
+    if "cksum" not in obj or not isinstance(obj.get("cksum"), (int, float)):
+        return False
+    received = int(obj["cksum"]) & 0xffffffff
+    copy = dict(obj)
+    del copy["cksum"]
+    expected = checksum_compute(copy)
+    return received == expected
 
 class Sender:
     def __init__(self, host, port):
@@ -42,9 +59,14 @@ class Sender:
         if addr != (self.remote_host, self.remote_port):
             self.log("Error:  Received response from unexpected remote; ignoring")
             return None
-        else:
-            self.log("Received message %s" % data)
-            return json.loads(data.decode("utf-8"))
+        try:
+            parsed = json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None  # Corrupted packet, drop
+        self.log("Received message %s" % data)
+        if not checksum_verify(parsed):
+            return None  # Bad checksum, drop
+        return parsed
 
     def run(self):
         seq = 0
@@ -98,6 +120,7 @@ class Sender:
                         continue
                     
                     self.msg = {"type": "data", "seq": seq, "data": data}
+                    self.msg["cksum"] = checksum_compute(self.msg)
                     self.send(self.msg)
 
 
