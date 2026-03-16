@@ -32,6 +32,7 @@ class Sender:
         self.remote_port = None
 
         self.window_size = 2
+        self.max_window_size = 64
         self.unacked = {}
         self.msg = None
 
@@ -109,7 +110,7 @@ class Sender:
                                 if packet_info["retransmitted"] == False:
                                     timeout_interval = self.update_timeout(packet_info["time"], time.time())
                                     timeout_interval = max(0.5, timeout_interval)
-                                    self.window_size += 1
+                                    self.window_size = min(self.max_window_size, self.window_size + 1)
 
                                 del self.unacked[ack_seq]
 
