@@ -5,13 +5,21 @@ DATA_SIZE = 1375
 
 
 def checksum_compute(obj):
-    """Compute CRC32 over canonical JSON (no cksum field). obj must not contain 'cksum'."""
+    """
+    Compute CRC32 over canonical JSON (no cksum field). obj must not contain 'cksum'.
+    :param obj: dict to compute checksum over 
+    :return: checksum as 32-bit unsigned int
+    """
     canonical = json.dumps(obj, sort_keys=True)
     return zlib.crc32(canonical.encode()) & 0xffffffff
 
 
 def checksum_verify(obj):
-    """Return True if obj has valid 'cksum' matching recomputed checksum."""
+    """
+    Return True if obj has valid 'cksum' matching recomputed checksum.
+    :param obj: dict to verify
+    :return: True if checksum is valid, False otherwise
+    """
     if "cksum" not in obj or not isinstance(obj.get("cksum"), (int, float)):
         return False
     received = int(obj["cksum"]) & 0xffffffff
@@ -22,6 +30,11 @@ def checksum_verify(obj):
 
 class Sender:
     def __init__(self, host, port):
+    """
+    Initalize the sender. Sets up the UDP socket and binds to an available port. Also initializes state for the sender.
+    :param host: remote host to connect to
+    :param port: remote port to connect to  
+    """
         self.host = host
         self.port = int(port)
         self.log("Sender starting up using port %s" % self.port)
@@ -41,14 +54,26 @@ class Sender:
         self.highest_ack = -1
 
     def log(self, message):
+    """
+    helper method to print debug messages to standard error
+    """
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
     def send(self, message):
+    """
+    encodes message as JSON and sends it to the remote host/port. Also logs the message being sent.
+    :param message: dict to send to remote host/port
+    """
         self.log("Sending message '%s'" % json.dumps(message))
         self.socket.sendto(json.dumps(message).encode("utf-8"), (self.host, self.port))
 
     def recv(self, socket):
+    """
+    Receives incoming UDP packet ACKs from the reciver, verifies the checksum, and returns the parsed JSON as a dict. Also logs the message being received.
+    :param socket: socket to recv from
+    :return: dict of the parsed JSON message if checksum is valid, None otherwise
+    """
         data, addr = socket.recvfrom(65535)
 
         # Grab the remote host/port if we don't already have it
@@ -70,6 +95,9 @@ class Sender:
         return parsed
 
     def run(self):
+    """
+    Main loop of the sender. Listens for incoming ACKs and reads from stdin to send data. Implements a sliding window protocol with timeouts and exponential backoff.
+    """
         seq = 0
         eof_reached = False 
         timeout_interval = 2.0
@@ -134,6 +162,12 @@ class Sender:
                 sys.exit(0)
 
     def update_timeout(self, send_time, ack_time):
+    """
+    Update the timeout interval using the Jacobson/Karels algorithm based on the send time and ack time of a packet.
+    :param send_time: time the packet was sent
+    :param ack_time: time the ack was received
+    :return: new timeout interval
+    """
             sample_rtt = ack_time - send_time
             
             self.estimated_rtt = 0.875 * self.estimated_rtt + 0.125 * sample_rtt
@@ -144,9 +178,6 @@ class Sender:
             
             timeout_interval = self.estimated_rtt + 4 * self.wobble
             return timeout_interval
-
-
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='send data')

@@ -4,13 +4,21 @@ import argparse, socket, time, json, select, struct, sys, math, zlib
 
 
 def checksum_compute(obj):
-    """Compute CRC32 over canonical JSON (no cksum field). obj must not contain 'cksum'."""
+    """
+    Compute CRC32 over canonical JSON . obj must not contain 'cksum'.
+    :param obj: dict to compute checksum over
+    :return: checksum as 32-bit unsigned int
+    """
     canonical = json.dumps(obj, sort_keys=True)
     return zlib.crc32(canonical.encode()) & 0xffffffff
 
 
 def checksum_verify(obj):
-    """Return True if obj has valid 'cksum' matching recomputed checksum."""
+    """
+    Return True if obj has valid 'cksum' matching recomputed checksum.
+    :param obj: dict to verify
+    :return: True if checksum is valid, False otherwise
+    """
     if "cksum" not in obj or not isinstance(obj.get("cksum"), (int, float)):
         return False
     received = int(obj["cksum"]) & 0xffffffff
@@ -21,6 +29,9 @@ def checksum_verify(obj):
 
 
 class Receiver:
+"""
+Initalizes the reciver. sets up the UDP socket and binds to an available port. Also initializes state for the receiver.
+"""
     def __init__(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
@@ -33,10 +44,19 @@ class Receiver:
         self.buffer = {}  # seq -> data
 
     def send(self, message):
+    """
+    Sends a message to the remote host.
+    :param message: dict to send to remote host
+    """
         self.log("Sent message %s" % json.dumps(message))
         self.socket.sendto(json.dumps(message).encode("utf-8"), (self.remote_host, self.remote_port))
 
     def recv(self, socket):
+    """
+    Receives a message from the remote host.
+    :param socket: socket to receive from
+    :return: dict received from remote host
+    """
         data, addr = socket.recvfrom(65535)
 
         # Grab the remote host/port if we don't already have it
@@ -56,10 +76,17 @@ class Receiver:
         return parsed
 
     def log(self, message):
+    """
+    helper method to print debug messages to standard error
+    :param message: message to print
+    """
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
     def run(self):
+    """
+    Main loop of the receiver. Listens for incoming data packets, verifies checksums, sends ACKs, and writes in-order data to stdout.
+    """
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
@@ -85,7 +112,6 @@ class Receiver:
                         del self.buffer[self.next_expected]
                         self.next_expected += 1
                     self.send(ack_msg)
-
         return
 
 if __name__ == "__main__":
